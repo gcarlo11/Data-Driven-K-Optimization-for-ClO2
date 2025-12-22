@@ -6,7 +6,6 @@ import {
 } from 'recharts';
 
 export default function Home() {
-  // 1. State hanya untuk 6 Parameter yang diminta
   const [formData, setFormData] = useState({
     kappa: 10.5,
     temperature: 60.0,
@@ -32,19 +31,15 @@ export default function Home() {
       const res = response.data;
       setResult(res);
       
-      // 2. LOGIKA GENERATE DATA GRAFIK (Operational Map)
-      // Kita buat garis kurva efisiensi di sekitar Kappa saat ini
+
       const points = [];
       const centerKappa = Number(formData.kappa);
-      // Buat range dari -2 sampai +2 sekitar Kappa user
       for (let i = -2; i <= 2; i++) {
-        const k_sim = centerKappa + (i * 0.5); // x-axis points
+        const k_sim = centerKappa + (i * 0.5); 
         if (k_sim > 0) {
             points.push({
                 kappa: Number(k_sim.toFixed(1)),
-                // Garis Optimasi (Prediksi AI)
                 optimalLine: Number((k_sim * res.k_optimal).toFixed(2)), 
-                // Garis Aktual (Kondisi user saat ini)
                 currentLine: Number((k_sim * res.k_current).toFixed(2)),
             });
         }
@@ -60,11 +55,10 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-slate-50 p-6 font-sans text-slate-800">
       <div className="max-w-6xl mx-auto">
-        <h1 className="text-2xl font-bold mb-6 text-center text-slate-800">🏭 D0 Bleaching Optimizer</h1>
+        <h1 className="text-2xl font-bold mb-6 text-left text-slate-800">D0 Bleaching Optimizer</h1>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* KOLOM KIRI: INPUT FORM (6 Parameter) */}
           <div className="lg:col-span-4 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
             <h2 className="font-semibold mb-4 text-slate-700 border-b pb-2">Input Parameters</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -107,11 +101,9 @@ export default function Home() {
             </form>
           </div>
 
-          {/* KOLOM KANAN: RESULT & CHART */}
           <div className="lg:col-span-8 space-y-6">
             {result ? (
               <>
-                {/* 1. HASIL UTAMA */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-green-500">
                         <p className="text-sm text-slate-500 font-medium">Recommended Dose</p>
@@ -133,7 +125,6 @@ export default function Home() {
                     </div>
                 </div>
 
-                {/* 2. GRAFIK OPERATIONAL MAP */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h3 className="font-bold text-slate-700 mb-4">📈 Operational Map: Kappa vs ClO₂ Dose</h3>
                     <div className="h-[300px] w-full">
