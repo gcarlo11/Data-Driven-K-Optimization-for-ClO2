@@ -1,8 +1,12 @@
 'use client';
 import { useState } from 'react';
 import axios from 'axios';
+import { 
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Scatter 
+} from 'recharts';
 
 export default function Home() {
+  // 1. State hanya untuk 6 Parameter yang diminta
   const [formData, setFormData] = useState({
     kappa: 10.5,
     temperature: 60.0,
@@ -13,13 +17,11 @@ export default function Home() {
   });
 
   const [result, setResult] = useState<any>(null);
+  const [graphData, setGraphData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
   const handleChange = (e: any) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: parseFloat(e.target.value)
-    });
+    setFormData({ ...formData, [e.target.name]: parseFloat(e.target.value) });
   };
 
   const handleSubmit = async (e: any) => {
@@ -27,119 +29,175 @@ export default function Home() {
     setLoading(true);
     try {
       const response = await axios.post('http://127.0.0.1:8000/predict', formData);
-      setResult(response.data);
+      const res = response.data;
+      setResult(res);
+      
+      // 2. LOGIKA GENERATE DATA GRAFIK (Operational Map)
+      // Kita buat garis kurva efisiensi di sekitar Kappa saat ini
+      const points = [];
+      const centerKappa = Number(formData.kappa);
+      // Buat range dari -2 sampai +2 sekitar Kappa user
+      for (let i = -2; i <= 2; i++) {
+        const k_sim = centerKappa + (i * 0.5); // x-axis points
+        if (k_sim > 0) {
+            points.push({
+                kappa: Number(k_sim.toFixed(1)),
+                // Garis Optimasi (Prediksi AI)
+                optimalLine: Number((k_sim * res.k_optimal).toFixed(2)), 
+                // Garis Aktual (Kondisi user saat ini)
+                currentLine: Number((k_sim * res.k_current).toFixed(2)),
+            });
+        }
+      }
+      setGraphData(points);
+
     } catch (error) {
-      console.error("Error connecting to API", error);
-      alert("Gagal koneksi ke Backend API");
+      alert("Gagal koneksi ke API");
     }
     setLoading(false);
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8 font-sans">
-      <div className="max-w-4xl mx-auto">
-        
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-slate-800">🧪 D0 Bleaching Optimizer</h1>
-          <p className="text-slate-500">AI-Powered Chemical Dosing Recommendation</p>
-        </div>
+    <main className="min-h-screen bg-slate-50 p-6 font-sans text-slate-800">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-2xl font-bold mb-6 text-center text-slate-800">🏭 D0 Bleaching Optimizer</h1>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          <div className="md:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="font-semibold mb-4 text-slate-700">Process Conditions</h2>
+          {/* KOLOM KIRI: INPUT FORM (6 Parameter) */}
+          <div className="lg:col-span-4 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
+            <h2 className="font-semibold mb-4 text-slate-700 border-b pb-2">Input Parameters</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               
-              <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase">Inlet Kappa</label>
-                <input type="number" step="0.1" name="kappa" value={formData.kappa} onChange={handleChange} 
-                  className="w-full mt-1 p-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className="text-xs font-bold text-slate-500">Kappa Number</label>
+                    <input type="number" step="0.1" name="kappa" value={formData.kappa} onChange={handleChange} className="input-field" />
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-slate-500">Temperature (°C)</label>
+                    <input type="number" step="1" name="temperature" value={formData.temperature} onChange={handleChange} className="input-field" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className="text-xs font-bold text-slate-500">Inlet pH</label>
+                    <input type="number" step="0.1" name="ph" value={formData.ph} onChange={handleChange} className="input-field" />
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-slate-500">Inlet Brightness</label>
+                    <input type="number" step="0.1" name="inlet_brightness" value={formData.inlet_brightness} onChange={handleChange} className="input-field" />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase">Pulp Flow (ADt/h)</label>
-                <input type="number" step="10" name="pulp_flow" value={formData.pulp_flow} onChange={handleChange} 
-                  className="w-full mt-1 p-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" />
+                <label className="text-xs font-bold text-slate-500">Pulp Flow (ADt/h)</label>
+                <input type="number" step="10" name="pulp_flow" value={formData.pulp_flow} onChange={handleChange} className="input-field w-full" />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase">Inlet Brightness</label>
-                <input type="number" step="0.1" name="inlet_brightness" value={formData.inlet_brightness} onChange={handleChange} 
-                  className="w-full mt-1 p-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" />
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                <label className="text-xs font-bold text-blue-700">Current ClO₂ Dose (kg/h)</label>
+                <input type="number" step="0.1" name="current_dose" value={formData.current_dose} onChange={handleChange} className="input-field w-full border-blue-300 focus:ring-blue-500" />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase">Current Dose (kg)</label>
-                <input type="number" step="0.1" name="current_dose" value={formData.current_dose} onChange={handleChange} 
-                  className="w-full mt-1 p-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" />
-              </div>
-
-              <input type="hidden" name="temperature" value={formData.temperature} />
-              <input type="hidden" name="ph" value={formData.ph} />
-
-              <button type="submit" disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors mt-4">
-                {loading ? 'Calculating...' : 'Get Recommendation'}
+              <button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-lg mt-4 transition-all">
+                {loading ? 'Calculating...' : 'Optimize Process ⚡'}
               </button>
             </form>
           </div>
 
-          <div className="md:col-span-2">
+          {/* KOLOM KANAN: RESULT & CHART */}
+          <div className="lg:col-span-8 space-y-6">
             {result ? (
-              <div className="space-y-6">
-                
-                <div className="bg-white p-8 rounded-xl shadow-lg border-t-4 border-blue-500">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-slate-500 font-medium">Recommended ClO₂ Setpoint</span>
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      result.control_status === 'OPTIMIZED' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      {result.control_status}
-                    </span>
-                  </div>
-                  
-                  <div className="flex items-end gap-4">
-                    <span className="text-6xl font-bold text-slate-800">{result.recommended_dose}</span>
-                    <span className="text-xl text-slate-500 mb-2">kg/h</span>
-                  </div>
+              <>
+                {/* 1. HASIL UTAMA */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-green-500">
+                        <p className="text-sm text-slate-500 font-medium">Recommended Dose</p>
+                        <div className="flex items-baseline gap-2 mt-1">
+                            <span className="text-4xl font-bold text-slate-800">{result.recommended_dose}</span>
+                            <span className="text-sm text-slate-500">kg/h</span>
+                        </div>
+                        <div className={`mt-2 text-sm font-bold ${result.delta >= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            {result.delta > 0 ? `+${result.delta}` : result.delta} kg vs Current
+                        </div>
+                    </div>
 
-                  <div className="mt-4 pt-4 border-t border-slate-100 flex gap-6 text-sm">
-                    <div>
-                      <span className="block text-slate-400">Current</span>
-                      <span className="font-semibold text-slate-700">{result.current_dose} kg/h</span>
+                    <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-blue-500">
+                        <p className="text-sm text-slate-500 font-medium">K-Factor Efficiency</p>
+                        <div className="flex items-baseline gap-2 mt-1">
+                            <span className="text-4xl font-bold text-slate-800">{result.k_optimal}</span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-2">Target Efficiency based on Model</p>
                     </div>
-                    <div>
-                      <span className="block text-slate-400">Adjustment</span>
-                      <span className={`font-semibold ${result.delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                        {result.delta > 0 ? '+' : ''}{result.delta} kg/h
-                      </span>
-                    </div>
-                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white p-4 rounded-xl border border-slate-200">
-                    <span className="text-xs text-slate-400 uppercase font-bold">Optimal K-Factor</span>
-                    <div className="text-2xl font-bold text-slate-700 mt-1">{result.k_factor_optimal}</div>
-                    <p className="text-xs text-slate-500 mt-1">Efficiency metric for current state</p>
-                  </div>
-                  <div className="bg-white p-4 rounded-xl border border-slate-200">
-                    <span className="text-xs text-slate-400 uppercase font-bold">Target K-Factor</span>
-                    <div className="text-2xl font-bold text-slate-400 mt-1">{result.k_factor_target}</div>
-                    <p className="text-xs text-slate-500 mt-1">Plant Baseline</p>
-                  </div>
+                {/* 2. GRAFIK OPERATIONAL MAP */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h3 className="font-bold text-slate-700 mb-4">📈 Operational Map: Kappa vs ClO₂ Dose</h3>
+                    <div className="h-[300px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <ComposedChart data={graphData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                <XAxis 
+                                    dataKey="kappa" 
+                                    type="number"  
+                                    domain={['auto', 'auto']} 
+                                    tickCount={5}
+                                    label={{ value: 'Kappa Number', position: 'insideBottom', offset: -10 }} 
+                                />
+                                <YAxis label={{ value: 'ClO₂ Dose (kg)', angle: -90, position: 'insideLeft' }} />
+                                <Tooltip />
+                                <Legend verticalAlign="top" height={36}/>
+                                
+                                <Line type="monotone" dataKey="currentLine" stroke="#94a3b8" strokeDasharray="5 5" name="Current Setting" dot={false} strokeWidth={2} />
+                                
+                                <Line type="monotone" dataKey="optimalLine" stroke="#10b981" name="AI Optimization" strokeWidth={3} dot={false} />
+                                
+                                <Scatter 
+                                    name="Current Position" 
+                                    data={[{
+                                        kappa: Number(formData.kappa), 
+                                        optimalLine: Number(result.recommended_dose) 
+                                    }]} 
+                                    fill="red" 
+                                />
+                            </ComposedChart>
+                        </ResponsiveContainer>
+                    </div>
+                    <p className="text-xs text-center text-slate-400 mt-2">
+                        Garis Hijau menunjukkan dosis optimal untuk berbagai nilai Kappa. 
+                        Garis Putus-putus abu-abu adalah efisiensi settingan Anda saat ini.
+                    </p>
                 </div>
-
-              </div>
+              </>
             ) : (
-              <div className="h-full flex items-center justify-center bg-slate-100 rounded-xl border-2 border-dashed border-slate-300 text-slate-400">
-                <p>Enter parameters and click Calculate to see AI recommendations</p>
-              </div>
+                <div className="h-full flex flex-col items-center justify-center bg-slate-100 rounded-xl border-2 border-dashed border-slate-300 text-slate-400 min-h-[400px]">
+                    <span className="text-4xl mb-2">👈</span>
+                    <p>Enter data on the left to start</p>
+                </div>
             )}
           </div>
-
         </div>
       </div>
+
+      <style jsx>{`
+        .input-field {
+            width: 100%;
+            margin-top: 4px;
+            padding: 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            outline: none;
+            color: #1e293b;
+            font-size: 0.9rem;
+        }
+        .input-field:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+      `}</style>
     </main>
   );
 }
