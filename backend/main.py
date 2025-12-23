@@ -15,7 +15,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables
 model = None
 params = None
 
@@ -25,7 +24,7 @@ def load_artifacts():
     try:
         model = joblib.load('d0_xgboost_model.pkl')
         params = joblib.load('d0_system_params.pkl')
-        print("✓ Model Loaded (Balanced Version)")
+        print("✓ Model Loaded & Dynamic Bias Active")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -42,18 +41,16 @@ def predict_dose(data: ProcessInput):
     if not model or not params:
         raise HTTPException(status_code=500, detail="Model not active")
 
-    K_TARGET = params['k_target']
-    BIAS_INLET = params['bias_inlet']
-    FEATURE_NAMES = params['feature_names']
+    if params.get('bias_type') == 'dynamic':
+        slope = params['bias_slope']
+        intercept = params['bias_intercept']
+        estimated_outlet = (slope * data.inlet_brightness) + intercept
+    else:
+        
+        estimated_outlet = data.inlet_brightness - params['bias_inlet']
 
-    # --- 1. PREPROCESSING ---
-    # Hitung estimasi Brightness Outlet saat ini berdasarkan sensor Inlet
-    estimated_outlet = data.inlet_brightness - BIAS_INLET
-    
-    # Hitung Brightness Gap (Target - Estimasi)
     brightness_gap = 70.0 - estimated_outlet
     
-    # Mapping ke format Model
     input_dict = {
         'D0 Tower Inlet Kappa Q analyzer/Cormec/Polarox  Kappa': data.kappa,
         'D0 Tower Inlet Temperature': data.temperature,
@@ -66,50 +63,44 @@ def predict_dose(data: ProcessInput):
         'Flow_Stability': 0.0
     }
     
-    df_input = pd.DataFrame([input_dict])
-    df_input = df_input[FEATURE_NAMES]
+    df_input = pd.DataFrame([input_dict])[params['feature_names']]
 
-    # --- 2. PREDIKSI ---
     delta_k_pred = model.predict(df_input)[0]
-    k_optimal = float(K_TARGET + delta_k_pred)
-    
-    # Base Calculation
-    rec_dose = k_optimal * data.kappa
+    k_optimal = float(params['k_target'] + delta_k_pred)
+    raw_rec_dose = k_optimal * data.kappa
 
-    # --- 3. SAFETY GUARDRAILS (UPDATED) ---
-    final_dose = rec_dose
-    status_msg = "OPTIMIZED"
+    final_dose = raw_rec_dose
     
-    # A. GUARDRAIL: MAINTAIN OPTIMAL (Logika Baru Anda!)
-    # Jika estimasi brightness sudah di range bagus (69.5 - 70.5)
-    # DAN prediksi perubahan K-Factor sangat kecil (< 0.02)
-    # MAKA: Jangan ubah apapun.
-    if (69.5 <= estimated_outlet <= 70.5) and (abs(delta_k_pred) < 0.02):
+    DEADBAND = 0.5
+    dose_diff = final_dose - data.current_dose
+    
+    status_msg = "OPTIMIZATION_ACTION" 
+  
+    if (69.0 <= estimated_outlet <= 71.0) and (abs(dose_diff) < DEADBAND):
         final_dose = data.current_dose
         status_msg = "MAINTAIN_OPTIMAL"
     
+    
     else:
-        # B. GUARDRAIL: Logic Under/Over Bleach Standard
-        # Jika Under-bleach (< 69.0), Dosis TIDAK BOLEH Turun
         if estimated_outlet < 69.0 and final_dose < data.current_dose:
-            final_dose = data.current_dose * 1.05 # Paksa naik 5%
+            final_dose = data.current_dose * 1.05
             status_msg = "GUARDRAIL_UNDERBLEACH"
-            
-        # Jika Over-bleach (> 71.0), Dosis TIDAK BOLEH Naik
+        
         elif estimated_outlet > 71.0 and final_dose > data.current_dose:
-            final_dose = data.current_dose * 0.95 # Paksa turun 5%
+            final_dose = data.current_dose * 0.95
             status_msg = "GUARDRAIL_OVERBLEACH"
-            
-        # C. Rate Limiter (Max 20%)
-        # Hanya berlaku jika tidak masuk kondisi MAINTAIN
+        
         else:
             change = final_dose - data.current_dose
             max_change = data.current_dose * 0.20
+            
             if abs(change) > max_change:
                 final_dose = data.current_dose + np.sign(change) * max_change
                 status_msg = "RATE_LIMITED"
+            elif abs(change) >= DEADBAND:
+                 status_msg = "OPTIMIZATION_ACTION" 
 
-    # Clip Safety
+    
     final_dose = max(0.1, final_dose)
 
     return {
@@ -118,6 +109,6 @@ def predict_dose(data: ProcessInput):
         "delta": round(final_dose - data.current_dose, 2),
         "k_optimal": round(k_optimal, 4),
         "k_current": round(data.current_dose / data.kappa, 4),
-        "estimated_outlet": round(estimated_outlet, 2), # Kirim balik untuk UI
+        "estimated_outlet": round(estimated_outlet, 2),
         "control_status": status_msg
     }
