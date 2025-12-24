@@ -92,64 +92,68 @@ def predict_dose(data: ProcessInput):
     # Target Dosis Murni AI (Untuk mencapai 70.0 pas)
     raw_ai_dose = k_optimal * data.kappa
 
-    # 3. LOGIC DECISION (Sesuai Request Anda)
+    # 3. LOGIC DECISION (FINAL FIX: SAFETY FIRST)
     final_dose = raw_ai_dose
     status_msg = "OPTIMIZATION_ACTION"
     
-    # Cek apakah estimasi saat ini SUDAH MASUK Range Aman (69.0 - 71.0)?
-    is_in_safe_range = 69.0 <= estimated_outlet <= 71.0
-    
     # Hitung selisih saran AI vs Current
     diff = raw_ai_dose - data.current_dose
+    
+    # Range Aman: 69.0 sampai 71.0
+    is_in_safe_range = 69.0 <= estimated_outlet <= 71.0
 
-    # --- RULE 1: SAFE RANGE (Permintaan Utama Anda) ---
-    # Jika estimasi outlet sudah 69-71, maka bilangnya OPTIMAL.
-    # Kecuali AI mendeteksi anomali parah (beda dosis > 3kg), kita tahan di current.
-    if is_in_safe_range:
-        # Cek apakah AI "halu" minta perubahan besar padahal sudah aman
+    # --- RULE 0: ANTI-GREEDY (Hanya berlaku di 70.0 - 71.0) ---
+    if (70.0 <= estimated_outlet <= 71.0) and diff > 0:
+        final_dose = data.current_dose
+        status_msg = "MAINTAIN_OPTIMAL"
+
+    # --- RULE 1: SAFE RANGE ---
+    elif is_in_safe_range:
         if abs(diff) < 3.0: 
             final_dose = data.current_dose
             status_msg = "MAINTAIN_OPTIMAL"
         else:
-            # Jika range aman tapi AI minta ubah drastis, kita batasi (Rate Limit)
-            # Ini jarang terjadi, biasanya saat Kappa berubah drastis tiba-tiba
-            status_msg = "RATE_LIMITED" # Akan kena logic rate limiter di bawah
+            status_msg = "RATE_LIMITED" 
 
-    # --- RULE 2: USER SATISFACTION ---
-    # Jika user sudah input angka yang mirip saran AI (< 0.5kg)
-    elif abs(diff) <= 0.5:
+    # --- RULE 2: USER SATISFACTION (Safety Check) ---
+    elif abs(diff) <= 0.5 and estimated_outlet <= 71.0:
         final_dose = data.current_dose
         status_msg = "MAINTAIN_OPTIMAL"
         
-    # --- RULE 3: GUARDRAILS (Jika Belum Optimal / Di Luar Range) ---
+    # --- RULE 3: GUARDRAILS & ACTION ---
     else:
-        # GUARDRAIL A: Under-bleach (< 69.0) -> HARUS NAIK
+        # GUARDRAIL A: Under-bleach (< 69.0)
         if estimated_outlet < 69.0:
             if final_dose < data.current_dose:
-                final_dose = data.current_dose * 1.05 # Paksa naik 5%
+                final_dose = data.current_dose * 1.05 
                 status_msg = "GUARDRAIL_UNDERBLEACH"
             else:
-                status_msg = "OPTIMIZATION_ACTION" # Naik normal sesuai AI
+                status_msg = "OPTIMIZATION_ACTION"
 
-        # GUARDRAIL B: Over-bleach (> 71.0) -> HARUS TURUN
+        # GUARDRAIL B: Over-bleach (> 71.0)
         elif estimated_outlet > 71.0:
             if final_dose > data.current_dose:
-                final_dose = data.current_dose * 0.95 # Paksa turun 5%
+                final_dose = data.current_dose * 0.95 
                 status_msg = "GUARDRAIL_OVERBLEACH"
             else:
-                status_msg = "OPTIMIZATION_ACTION" # Turun normal sesuai AI
+                status_msg = "OPTIMIZATION_ACTION" 
 
-    # --- FINAL SAFETY: RATE LIMITER ---
-    # Pastikan perubahan tidak pernah > 20% dalam kondisi apapun (kecuali maintain)
+
+    LIMIT_PERCENTAGE = 0.20 # 20%
+
+    if "GUARDRAIL" in status_msg:
+        LIMIT_PERCENTAGE = 0.50 
+
     if status_msg != "MAINTAIN_OPTIMAL":
         change = final_dose - data.current_dose
-        max_change = data.current_dose * 0.20
+        max_change = data.current_dose * LIMIT_PERCENTAGE
         
         if abs(change) > max_change:
             final_dose = data.current_dose + np.sign(change) * max_change
-            status_msg = "RATE_LIMITED"
+            
+            if "GUARDRAIL" not in status_msg:
+                status_msg = "RATE_LIMITED"
 
-    # Clip Safety (Agar tidak negatif)
     final_dose = max(0.1, min(final_dose, 50.0))
 
     return {
