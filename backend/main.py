@@ -28,8 +28,8 @@ def load_artifacts():
         params = joblib.load('d0_system_params.pkl')
         
         # Load Model Predictor (Yang baru dibuat)
-        predictor_model = joblib.load('d0_predictor_model.pkl')
-        predictor_features = joblib.load('d0_predictor_features.pkl')
+        predictor_model = joblib.load('d0_predictor_model (2).pkl')
+        predictor_features = joblib.load('d0_predictor_features (2).pkl')
         
         print("✓ All AI Models Loaded Successfully")
     except Exception as e:
@@ -139,7 +139,7 @@ def predict_dose(data: ProcessInput):
                 status_msg = "OPTIMIZATION_ACTION" 
 
 
-    LIMIT_PERCENTAGE = 0.20 # 20%
+    LIMIT_PERCENTAGE = 0.50 # 20%
 
     if "GUARDRAIL" in status_msg:
         LIMIT_PERCENTAGE = 0.50 
@@ -163,5 +163,6 @@ def predict_dose(data: ProcessInput):
         "k_optimal": round(k_optimal, 4),
         "k_current": round(data.current_dose / data.kappa, 4),
         "estimated_outlet": round(estimated_outlet, 2),
+        "inlet_brightness": data.inlet_brightness, 
         "control_status": status_msg
     }
