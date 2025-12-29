@@ -25,7 +25,6 @@ import {
   TrendingUp 
 } from 'lucide-react';
 
-// --- TIPE DATA ---
 interface FormData {
   kappa: number;
   temperature: number;
@@ -46,12 +45,11 @@ interface ApiResult {
 }
 
 export default function Home() {
-  // --- STATE ---
   const [formData, setFormData] = useState<FormData>({
     kappa: 8.5,
-    temperature: 74.0,
-    ph: 2.1,
-    inlet_brightness: 68.3,
+    temperature: 75.0,
+    ph: 2.2,
+    inlet_brightness: 70,
     pulp_flow: 750.0,
     current_dose: 25.0
   });
@@ -61,7 +59,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // --- HANDLERS ---
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
     setFormData({ 
@@ -73,44 +70,34 @@ export default function Home() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
     
     try {
-      // 1. Panggil API Backend
-      // Pastikan backend jalan di port 8000
       const response = await axios.post('http://127.0.0.1:8000/predict', formData);
-      const res: ApiResult = response.data;
+      const res = response.data;
       setResult(res);
 
-      // 2. Generate Data Grafik (Operational Map)
-      const points = [];
-      const centerKappa = Number(formData.kappa);
-      
-      // Buat simulasi range Kappa +/- 2
-      for (let i = -4; i <= 4; i++) {
-        const k_sim = centerKappa + (i * 0.5); // Step 0.5
-        
-        if (k_sim > 0) {
-          points.push({
-            kappa: Number(k_sim.toFixed(1)),
-            // Garis Rekomendasi AI (Optimal K * Kappa)
-            optimalLine: Number((k_sim * res.k_optimal).toFixed(2)),
-            // Garis Settingan Saat Ini (Current K * Kappa)
-            currentLine: Number((k_sim * res.k_current).toFixed(2)),
-          });
+      setGraphData([
+        {
+          name: 'Current Status',
+          brightness: res.estimated_outlet,
+          dose: res.current_dose,
+          type: 'current'
+        },
+        {
+          name: 'AI Recommendation',
+          brightness: 70.0,
+          dose: res.recommended_dose,
+          type: 'target'
         }
-      }
-      setGraphData(points);
+      ]);
 
     } catch (err) {
-      console.error(err);
-      setError('Gagal terhubung ke Server Backend. Pastikan uvicorn main:app berjalan.');
+      setError('Gagal terhubung ke Server.');
     } finally {
       setLoading(false);
     }
   };
 
-  // --- UI HELPER FUNCTIONS ---
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'MAINTAIN_OPTIMAL': return 'bg-blue-50 border-blue-500 text-blue-800';
@@ -146,7 +133,6 @@ export default function Home() {
     <main className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans text-slate-800">
       <div className="max-w-7xl mx-auto">
         
-        {/* HEADER */}
         <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
@@ -163,7 +149,6 @@ export default function Home() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* --- KOLOM KIRI: INPUT FORM --- */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <h2 className="font-semibold text-lg mb-6 flex items-center gap-2 text-slate-700 border-b pb-4">
@@ -172,7 +157,6 @@ export default function Home() {
               
               <form onSubmit={handleSubmit} className="space-y-5">
                 
-                {/* Kappa */}
                 <div>
                   <label className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-1">
                     <Activity className="w-3 h-3" /> Kappa Number
@@ -182,7 +166,6 @@ export default function Home() {
                     className="input-field" placeholder="e.g. 10.5" />
                 </div>
 
-                {/* Temp & pH */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1">Temp (°C)</label>
@@ -198,7 +181,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Brightness & Flow */}
                 <div className="pt-4 border-t border-slate-100 space-y-4">
                    <div>
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1">Inlet Brightness (%ISO)</label>
@@ -217,9 +199,8 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Current Dose */}
                 <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mt-4">
-                  <label className="text-xs font-bold text-blue-800 uppercase mb-1">Current ClO₂ Dose (kg/h)</label>
+                  <label className="text-xs font-bold text-blue-800 uppercase mb-1">Current ClO₂ Dose (SP)</label>
                   <input type="number" step="0.1" name="current_dose" 
                     value={formData.current_dose} onChange={handleChange} 
                     className="w-full p-3 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-lg font-semibold text-slate-800" />
@@ -239,16 +220,14 @@ export default function Home() {
             )}
           </div>
 
-          {/* --- KOLOM KANAN: RESULT DASHBOARD --- */}
           <div className="lg:col-span-8 space-y-6">
             {result ? (
               <>
-                {/* 1. KARTU REKOMENDASI UTAMA */}
+
                 <div className={`relative overflow-hidden p-8 rounded-2xl shadow-lg border-l-8 transition-all duration-300 ${getStatusColor(result.control_status)}`}>
                   <div className="relative z-10">
                     <div className="flex flex-col md:flex-row justify-between md:items-start gap-4 mb-6">
                       
-                      {/* Status Badge */}
                       <div className="flex items-center gap-3">
                         <div className="p-2 bg-white/60 rounded-full backdrop-blur-sm">
                           {getStatusIcon(result.control_status)}
@@ -259,24 +238,21 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Inlet Quality Info (Dulu Estimated Outlet) */}
                       <div className="text-right bg-white/40 p-3 rounded-lg backdrop-blur-sm min-w-[140px]">
                         <p className="text-xs opacity-70 font-bold uppercase">Inlet Quality (Lab Eq)</p>
                         <p className="text-2xl font-bold">{result.estimated_outlet} <span className="text-sm font-normal">%ISO</span></p>
                       </div>
                     </div>
 
-                    {/* Angka Dosis */}
                     <div className="flex flex-col md:flex-row items-end gap-6">
                       <div>
                         <span className="text-xs font-bold opacity-70 uppercase block mb-1">Recommended Setpoint</span>
                         <div className="flex items-baseline gap-2">
                           <span className="text-6xl font-extrabold tracking-tight">{result.recommended_dose}</span>
-                          <span className="text-xl font-medium opacity-80">kg/h</span>
+                          <span className="text-xl font-medium opacity-80">kg Ac Cl</span>
                         </div>
                       </div>
 
-                      {/* Indikator Delta */}
                       <div className={`mb-3 px-4 py-2 rounded-lg border backdrop-blur-sm ${
                         result.delta === 0 ? 'bg-blue-100/50 border-blue-200 text-blue-800' : 
                         result.delta > 0 ? 'bg-red-100/50 border-red-200 text-red-800' : 'bg-green-100/50 border-green-200 text-green-800'
@@ -288,7 +264,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Pesan Konteks */}
                     {result.control_status === 'MAINTAIN_OPTIMAL' && (
                       <p className="mt-6 text-sm font-medium opacity-90 bg-white/50 p-3 rounded-lg inline-flex items-center gap-2">
                         <CheckCircle className="w-4 h-4" />
@@ -298,7 +273,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 2. GRID METRICS */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   <MetricCard label="Target Efficiency (Model)" value={result.k_optimal} sub="K-Factor" />
                   <MetricCard label="Current Efficiency" value={result.k_current} sub="K-Factor" />
@@ -310,7 +284,6 @@ export default function Home() {
                   />
                 </div>
 
-                {/* 3. CHART SECTION */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-slate-700 flex items-center gap-2">
@@ -322,57 +295,46 @@ export default function Home() {
                   
                   <div className="h-[350px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={graphData} margin={{ top: 20, right: 30, bottom: 20, left: 10 }}>
+                      <ComposedChart margin={{ top: 20, right: 30, bottom: 20, left: 10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                        
                         <XAxis 
-                          dataKey="kappa" 
+                          dataKey="brightness" 
                           type="number" 
-                          domain={['auto', 'auto']}
-                          label={{ value: 'Kappa Number', position: 'insideBottom', offset: -10, fill: '#94a3b8', fontSize: 12 }} 
+                          domain={[Math.floor(formData.inlet_brightness), 72]} 
+                          name="Brightness"
+                          unit="%ISO"
+                          label={{ value: 'Brightness (%ISO)', position: 'insideBottom', offset: -10, fill: '#94a3b8', fontSize: 12 }} 
                           tick={{ fill: '#64748b', fontSize: 12 }}
                         />
+                        
                         <YAxis 
-                          label={{ value: 'ClO₂ Dose (kg)', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 12 }} 
+                          dataKey="dose" 
+                          type="number"
+                          name="Dose"
+                          unit=" kg/h"
+                          label={{ value: 'ClO₂ Dose (SP)', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 12 }} 
                           tick={{ fill: '#64748b', fontSize: 12 }}
                         />
-                        {/* --- PERBAIKAN DI SINI: Value Any/Number/String --- */}
+                        
                         <Tooltip 
+                          cursor={{ strokeDasharray: '3 3' }}
                           contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                          formatter={(value: any) => [`${value} kg`, '']}
                         />
                         <Legend verticalAlign="top" height={36}/>
                         
-                        {/* Garis Current (Abu-abu putus-putus) */}
-                        <Line 
-                          type="monotone" 
-                          dataKey="currentLine" 
-                          stroke="#cbd5e1" 
-                          strokeDasharray="5 5" 
-                          name="Current Strategy" 
-                          dot={false} 
-                          strokeWidth={2} 
-                        />
-                        
-                        {/* Garis AI (Hijau Solid) */}
-                        <Line 
-                          type="monotone" 
-                          dataKey="optimalLine" 
-                          stroke="#10b981" 
-                          name="AI Optimized Strategy" 
-                          strokeWidth={3} 
-                          dot={false} 
-                        />
-                        
-                        {/* Titik Posisi User */}
                         <Scatter 
-                          name="Your Position" 
-                          data={[{
-                            kappa: Number(formData.kappa), 
-                            optimalLine: Number(result.recommended_dose) 
-                          }]} 
-                          fill={result.control_status === 'MAINTAIN_OPTIMAL' ? '#3b82f6' : '#ef4444'} 
+                          name="Current Status" 
+                          data={[graphData[0]]} 
+                          fill="#ef4444" 
                           shape="circle"
-                          legendType="circle"
+                        />
+                        
+                        <Scatter 
+                          name="AI Target (70% ISO)" 
+                          data={[graphData[1]]} 
+                          fill="#3b82f6" 
+                          shape="star"
                         />
                       </ComposedChart>
                     </ResponsiveContainer>
@@ -380,7 +342,6 @@ export default function Home() {
                 </div>
               </>
             ) : (
-              // EMPTY STATE
               <div className="h-full min-h-[500px] flex flex-col items-center justify-center bg-white rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 p-8 text-center">
                 <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
                   <ArrowRight className="w-8 h-8 text-slate-300" />
@@ -393,7 +354,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Styles inline untuk input field */}
       <style jsx>{`
         .input-field {
           width: 100%;
@@ -416,7 +376,6 @@ export default function Home() {
   );
 }
 
-// Komponen Kecil untuk Metric
 function MetricCard({ label, value, sub, highlight = false }: { label: string, value: string | number, sub: string, highlight?: boolean }) {
   return (
     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
