@@ -23,9 +23,9 @@ optimizer_features = None
 system_params = None
 
 TARGET_BRIGHTNESS = 70.0
-STEADY_STATE_LOWER = 69.5
-STEADY_STATE_UPPER = 70.5
-ERROR_TOLERANCE = 0.3
+STEADY_STATE_LOWER = 69.0  
+STEADY_STATE_UPPER = 71.0  
+ERROR_TOLERANCE = 1.0      
 
 @app.on_event("startup")
 def load_artifacts():
@@ -97,9 +97,11 @@ def predict_outlet_brightness(
 ) -> float:
     """
     STAGE 1: Predict outlet brightness for given ClO2 dose
-    This is your VIRTUAL SENSOR
     """
-    k_factor = clo2_dose / (kappa + 0.1)  # Avoid division by zero
+    k_factor = clo2_dose / (kappa + 0.1)
+    
+    # HITUNG FITUR BARU: ClO2_per_Ton (Sesuai referensi training terakhir)
+    clo2_per_ton = clo2_dose / (flow + 1.0)
     
     pred_input = {
         'Kappa': kappa,
@@ -109,7 +111,8 @@ def predict_outlet_brightness(
         'Brightness_Inlet': inlet_brightness,
         'Retention_Time': retention_time,
         'ClO2_Dosage': clo2_dose,
-        'K_Factor_Raw': k_factor
+        'K_Factor_Raw': k_factor,
+        'ClO2_per_Ton': clo2_per_ton  # WAJIB ADA UNTUK MODEL BARU
     }
     
     df_pred = pd.DataFrame([pred_input])[predictor_features]
@@ -228,49 +231,28 @@ def optimize_dose_binary_search(
 
 @app.post("/predict", response_model=OptimizationResponse)
 def predict_dose(data: ProcessInput):
-    """
-    CORRECTED FLOW:
-    1. Calculate Flow & Retention
-    2. Predict current outlet with current dose (VIRTUAL SENSOR)
-    3. Check control law: if on-target → HOLD
-    4. If off-target → Optimize dose to reach 70%
-    5. Apply safety guardrails
-    """
-    
     if not optimizer_model or not predictor_model:
         raise HTTPException(status_code=500, detail="Models not initialized")
     
     try:
-        # ================================================================
-        # STEP 1: CALCULATE PROCESS PARAMETERS
-        # ================================================================
         flow_inlet, retention_time = calculate_process_params(
             data.production_rate, data.consistency
         )
-        
         k_current = data.current_dose / (data.kappa + 0.1)
         K_TARGET = system_params['k_target']
         
-        # ================================================================
-        # STEP 2: VIRTUAL SENSOR - Predict current outlet
-        # ================================================================
+        # STEP 2: VIRTUAL SENSOR
         estimated_outlet = predict_outlet_brightness(
             predictor_model, predictor_features,
             data.kappa, data.temperature, flow_inlet, data.ph,
             data.inlet_brightness, retention_time, data.current_dose
         )
         
-        print(f"[VIRTUAL SENSOR] Current dose: {data.current_dose:.2f} → Estimated outlet: {estimated_outlet:.2f}%")
-        
         # ================================================================
-        # STEP 3: CONTROL LAW - Check if we need optimization
+        # STEP 3: CONTROL LAW - Steady State 69.0 - 71.0
         # ================================================================
-        target_delta = TARGET_BRIGHTNESS - data.inlet_brightness
-        estimated_delta = estimated_outlet - data.inlet_brightness
-        delta_error = estimated_delta - target_delta
-        
-        # HOLD condition: error within tolerance
-        if abs(delta_error) < ERROR_TOLERANCE:
+        # Jika hasil prediksi saat ini sudah masuk rentang, HOLD
+        if STEADY_STATE_LOWER <= estimated_outlet <= STEADY_STATE_UPPER:
             return OptimizationResponse(
                 recommended_dose=data.current_dose,
                 current_dose=data.current_dose,
@@ -282,12 +264,10 @@ def predict_dose(data: ProcessInput):
                 flow_calculated=flow_inlet,
                 retention_calculated=retention_time,
                 control_status="HOLD_STEADY",
-                reason=f"Delta error {delta_error:.2f} within tolerance ±{ERROR_TOLERANCE}"
+                reason=f"Steady State: Brightness {estimated_outlet:.2f}% sudah di rentang optimal"
             )
         
-        # ================================================================
         # STEP 4: OPTIMIZATION - Find dose to reach 70%
-        # ================================================================
         process_data = {
             'kappa': data.kappa,
             'temperature': data.temperature,
@@ -309,9 +289,7 @@ def predict_dose(data: ProcessInput):
         
         print(f"[OPTIMIZER] Optimal dose: {optimal_dose:.2f} → Predicted outlet: {predicted_outlet:.2f}%")
         
-        # ================================================================
         # STEP 5: SAFETY GUARDRAILS
-        # ================================================================
         dose_change = optimal_dose - data.current_dose
         status = "OPTIMIZED"
         reason = f"Target adjustment from {estimated_outlet:.1f}% to {TARGET_BRIGHTNESS:.1f}%"
@@ -355,9 +333,7 @@ def predict_dose(data: ProcessInput):
         
         final_k = final_dose / data.kappa
         
-        # ================================================================
         # RETURN RESPONSE
-        # ================================================================
         return OptimizationResponse(
             recommended_dose=round(final_dose, 2),
             current_dose=data.current_dose,
