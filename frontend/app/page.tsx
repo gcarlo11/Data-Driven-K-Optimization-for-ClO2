@@ -124,7 +124,7 @@ export default function Home() {
               </div>
               <h1 className="text-3xl font-black text-slate-900 tracking-tight">
                 D0 <span className="text-blue-600">Optimizer</span>
-                <span className="ml-3 text-xs bg-slate-200 px-2 py-1 rounded-md text-slate-500 font-bold uppercase tracking-widest">v2.5</span>
+                <span className="ml-3 text-xs bg-slate-200 px-2 py-1 rounded-md text-slate-500 font-bold uppercase tracking-widest">v0.4</span>
               </h1>
             </div>
             <p className="text-slate-500 font-bold text-xs uppercase tracking-widest opacity-75">Industrial Two-Stage AI Control</p>
@@ -149,7 +149,7 @@ export default function Home() {
                 <div className="space-y-4">
                   <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Produksi & Fisika</h3>
                   <div className="grid grid-cols-2 gap-4">
-                    <InputGroup label="Prod Rate (ADT/d)" name="production_rate" value={formData.production_rate} onChange={handleChange} />
+                    <InputGroup label="Prod Rate (ADT)" name="production_rate" value={formData.production_rate} onChange={handleChange} />
                     <InputGroup label="Consistency (%)" name="consistency" value={formData.consistency} onChange={handleChange} step="0.1" />
                   </div>
                   <div className="grid grid-cols-2 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100">
@@ -178,7 +178,7 @@ export default function Home() {
                       value={formData.current_dose} onChange={handleChange}
                       className="w-full bg-white/10 border-2 border-white/20 rounded-xl px-4 py-3 text-2xl font-black text-white focus:bg-white focus:text-slate-900 outline-none transition-all" 
                     />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-black text-slate-500">KG/H</span>
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-black text-slate-500">kg Ac Cl</span>
                   </div>
                 </div>
 
@@ -214,7 +214,7 @@ export default function Home() {
                       </div>
                       <div className="bg-white/60 backdrop-blur-xl px-8 py-5 rounded-[1.5rem] border border-white text-right shadow-sm w-full sm:w-auto">
                         <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Prediksi Lab Saat Ini</p>
-                        <p className="text-4xl font-black text-slate-900 leading-none">{result.estimated_outlet_current}<span className="text-lg font-bold opacity-30 ml-1">%ISO</span></p>
+                        <p className="text-4xl font-black text-slate-900 leading-none">{result.estimated_outlet_current.toFixed(2)}<span className="text-lg font-bold opacity-30 ml-1">%ISO</span></p>
                       </div>
                     </div>
 
@@ -223,7 +223,7 @@ export default function Home() {
                         <p className="text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest">Rekomendasi Dosis Baru</p>
                         <div className="flex items-baseline gap-4">
                           <span className="text-8xl sm:text-9xl font-black tracking-tighter text-slate-900 leading-[0.8]">{result.recommended_dose.toFixed(2)}</span>
-                          <span className="text-2xl font-bold text-slate-400 uppercase">kg Cl Ac</span>
+                          <span className="text-2xl font-bold text-slate-400 uppercase">SP</span>
                         </div>
                       </div>
                       <div className={`mb-4 px-6 py-3 rounded-2xl border-2 flex items-center gap-4 ${result.delta_dose >= 0 ? 'bg-rose-100/50 border-rose-200 text-rose-700' : 'bg-emerald-100/50 border-emerald-200 text-emerald-700'}`}>
@@ -240,10 +240,31 @@ export default function Home() {
 
                   {/* Kartu Metrik dengan Nilai yang Dibulatkan */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <MetricCard label="Optimal K" value={result.k_optimal.toFixed(4)} sub="Target" highlight />
-                    <MetricCard label="Current K" value={result.k_current.toFixed(4)} sub="Actual" />
-                    <MetricCard label="Est. Outlet" value={result.predicted_outlet_optimized} sub="After Action" />
-                    <MetricCard label="Efficiency" value={`${((result.k_optimal / result.k_current) * 100).toFixed(1)}%`} sub="Action Yield" />
+                    {/* Optimal K-Factor dengan pengecekan Steady State */}
+                    <MetricCard 
+                      label="Optimal K" 
+                      value={result.control_status === 'HOLD_STEADY' ? '-' : result.k_optimal.toFixed(4)} 
+                      sub="Target" 
+                      highlight 
+                    />
+                    
+                    <MetricCard 
+                      label="Actual K" 
+                      value={result.k_current.toFixed(4)} 
+                      sub="Current Ratio" 
+                    />
+                    
+                    <MetricCard 
+                      label="Est. Outlet" 
+                      value={result.predicted_outlet_optimized.toFixed(2)} 
+                      sub="Target ISO" 
+                    />
+                    
+                    <MetricCard 
+                      label="Efficiency" 
+                      value={result.control_status === 'HOLD_STEADY' ? '100.0%' : `${((result.k_optimal / result.k_current) * 100).toFixed(1)}%`} 
+                      sub="Action Yield" 
+                    />
                   </div>
 
                   {/* Operational Chart */}
