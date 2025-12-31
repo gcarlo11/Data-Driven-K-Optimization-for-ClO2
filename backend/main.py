@@ -15,7 +15,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables
 optimizer_model = None
 predictor_model = None
 predictor_features = None
@@ -26,20 +25,18 @@ TARGET_BRIGHTNESS = 70.0
 STEADY_STATE_LOWER = 69.0  
 STEADY_STATE_UPPER = 71.0  
 ERROR_TOLERANCE = 1.0      
+SEARCH_TOLERANCE = 0.1
 
 @app.on_event("startup")
 def load_artifacts():
     global optimizer_model, predictor_model, predictor_features, optimizer_features, system_params
     try:
-        # Load models
         optimizer_model = joblib.load('d0_xgboost_model_v3.pkl')
-        predictor_model = joblib.load('d0_predictor_model_v3.pkl')
+        predictor_model = joblib.load('d0_predictor_model_v6.pkl')
         
-        # Load features and params
-        predictor_features = joblib.load('d0_predictor_features_v3.pkl')
+        predictor_features = joblib.load('d0_predictor_features_v6.pkl')
         system_params = joblib.load('d0_system_params_v3.pkl')
         
-        # Get optimizer features from system params
         optimizer_features = system_params.get('feature_names', [])
         
         print("✓ All Models Loaded Successfully")
@@ -57,8 +54,8 @@ class ProcessInput(BaseModel):
     ph: float
     inlet_brightness: float
     current_dose: float
-    production_rate: float  # ADT/d
-    consistency: float      # %
+    production_rate: float  
+    consistency: float      
 
 class OptimizationResponse(BaseModel):
     recommended_dose: float
@@ -77,9 +74,7 @@ def calculate_process_params(production_rate: float, consistency: float):
     """Calculate Flow and Retention Time from production rate"""
     # Flow = (Production * 100) / (efficiency * consistency)
     flow_inlet = (production_rate * 100) / (0.9 * consistency)
-    
     # Retention Time = (Volume / Flow) * 60
-    # Assuming tower volume = 450 m³
     retention_time = (450 / flow_inlet) * 60
     
     return flow_inlet, retention_time
@@ -96,11 +91,10 @@ def predict_outlet_brightness(
     clo2_dose: float
 ) -> float:
     """
-    STAGE 1: Predict outlet brightness for given ClO2 dose
+    STAGE 1: Predict outlet brightness (VIRTUAL SENSOR)
     """
     k_factor = clo2_dose / (kappa + 0.1)
     
-    # HITUNG FITUR BARU: ClO2_per_Ton (Sesuai referensi training terakhir)
     clo2_per_ton = clo2_dose / (flow + 1.0)
     
     pred_input = {
@@ -112,7 +106,7 @@ def predict_outlet_brightness(
         'Retention_Time': retention_time,
         'ClO2_Dosage': clo2_dose,
         'K_Factor_Raw': k_factor,
-        'ClO2_per_Ton': clo2_per_ton  # WAJIB ADA UNTUK MODEL BARU
+        'ClO2_per_Ton': clo2_per_ton 
     }
     
     df_pred = pd.DataFrame([pred_input])[predictor_features]
@@ -146,7 +140,6 @@ def optimize_dose_binary_search(
     inlet_brightness = process_data['inlet_brightness']
     retention_time = process_data['retention_time']
     
-    # Get optimizer suggestion for initial search range
     brightness_gap = target_brightness - inlet_brightness
     
     opt_input = {
@@ -171,8 +164,8 @@ def optimize_dose_binary_search(
     k_optimal_hint = k_target + delta_k_pred
     dose_hint = k_optimal_hint * kappa
     
-    # Binary search bounds (use optimizer hint as center)
-    dose_min = max(5.0, dose_hint * 0.5)
+    # Binary search bounds 
+    dose_min = max(20.0, dose_hint * 0.5)
     dose_max = min(60.0, dose_hint * 1.5)
     
     # Binary search
@@ -180,7 +173,7 @@ def optimize_dose_binary_search(
     best_outlet = None
     
     max_iterations = 50
-    tolerance = 0.1  # ±0.1% brightness tolerance
+    tolerance = 0.1  
     
     for iteration in range(max_iterations):
         dose_test = (dose_min + dose_max) / 2
@@ -195,17 +188,15 @@ def optimize_dose_binary_search(
         error = outlet_pred - target_brightness
         
         if abs(error) <= tolerance:
-            # Found acceptable solution
             if best_dose is None or dose_test < best_dose:
                 best_dose = dose_test
                 best_outlet = outlet_pred
             
-            # Try to go lower (minimize ClO2)
             dose_max = dose_test
         else:
-            if error < 0:  # Under-bleach, need more ClO2
+            if error < 0:  
                 dose_min = dose_test
-            else:  # Over-bleach, can use less
+            else:  
                 dose_max = dose_test
         
         # Convergence check
@@ -224,7 +215,7 @@ def optimize_dose_binary_search(
     return {
         'optimal_dose': best_dose,
         'predicted_outlet': best_outlet,
-        'k_optimal': best_dose / kappa,
+        'k_optimal': best_dose / (kappa+ 0.1),
         'optimizer_hint': dose_hint,
         'iterations': iteration + 1
     }
@@ -235,23 +226,21 @@ def predict_dose(data: ProcessInput):
         raise HTTPException(status_code=500, detail="Models not initialized")
     
     try:
+        # CALCULATE PROCESS PARAMETER
         flow_inlet, retention_time = calculate_process_params(
             data.production_rate, data.consistency
         )
         k_current = data.current_dose / (data.kappa + 0.1)
         K_TARGET = system_params['k_target']
         
-        # STEP 2: VIRTUAL SENSOR
+        # VIRTUAL SENSOR
         estimated_outlet = predict_outlet_brightness(
             predictor_model, predictor_features,
             data.kappa, data.temperature, flow_inlet, data.ph,
             data.inlet_brightness, retention_time, data.current_dose
         )
         
-        # ================================================================
-        # STEP 3: CONTROL LAW - Steady State 69.0 - 71.0
-        # ================================================================
-        # Jika hasil prediksi saat ini sudah masuk rentang, HOLD
+        # CONTROL LAW - Steady State 69.0 - 71.0 (FIXED BUG)
         if STEADY_STATE_LOWER <= estimated_outlet <= STEADY_STATE_UPPER:
             return OptimizationResponse(
                 recommended_dose=data.current_dose,
@@ -259,15 +248,15 @@ def predict_dose(data: ProcessInput):
                 delta_dose=0.0,
                 estimated_outlet_current=estimated_outlet,
                 predicted_outlet_optimized=estimated_outlet,
-                k_optimal=k_current,
+                k_optimal=k_current, 
                 k_current=k_current,
                 flow_calculated=flow_inlet,
                 retention_calculated=retention_time,
                 control_status="HOLD_STEADY",
-                reason=f"Steady State: Brightness {estimated_outlet:.2f}% sudah di rentang optimal"
+                reason=f"Steady State: Brightness {estimated_outlet:.2f}% sudah masuk rentang target (69-71%)"
             )
         
-        # STEP 4: OPTIMIZATION - Find dose to reach 70%
+        #OPTIMIZATION - Find dose to reach 70%
         process_data = {
             'kappa': data.kappa,
             'temperature': data.temperature,
@@ -322,7 +311,7 @@ def predict_dose(data: ProcessInput):
                 reason = f"Change limited to ±20% ({max_change:.2f} kg/adt)"
         
         # Guardrail 3: Absolute bounds
-        final_dose = np.clip(final_dose, 5.0, 60.0)
+        final_dose = np.clip(final_dose, 20.0, 60.0)
         
         # Predict outlet with final recommended dose
         final_predicted_outlet = predict_outlet_brightness(
