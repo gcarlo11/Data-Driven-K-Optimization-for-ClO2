@@ -124,7 +124,7 @@ export default function Home() {
               </div>
               <h1 className="text-3xl font-black text-slate-900 tracking-tight">
                 D0 <span className="text-blue-600">Optimizer</span>
-                <span className="ml-3 text-xs bg-slate-200 px-2 py-1 rounded-md text-slate-500 font-bold uppercase tracking-widest">v0.4</span>
+                <span className="ml-3 text-xs bg-slate-200 px-2 py-1 rounded-md text-slate-500 font-bold uppercase tracking-widest">v0.5</span>
               </h1>
             </div>
             <p className="text-slate-500 font-bold text-xs uppercase tracking-widest opacity-75">Industrial Two-Stage AI Control</p>
@@ -242,7 +242,6 @@ export default function Home() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <MetricCard 
                       label="Optimal K-Factor" 
-                      // Jika status HOLD_STEADY, tampilkan "-", jika tidak tampilkan angka
                       value={result.control_status === 'HOLD_STEADY' ? '-' : result.k_optimal.toFixed(4)} 
                       sub="Efficiency Target" 
                       highlight 

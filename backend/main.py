@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="D0 Bleaching Optimizer API - CORRECTED")
+app = FastAPI(title="D0 Bleaching Optimizer API - CORRECTED WITH FUTURE SIMULATION")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,14 +27,18 @@ STEADY_STATE_UPPER = 71.0
 ERROR_TOLERANCE = 1.0      
 SEARCH_TOLERANCE = 0.1
 
+# --- [ADDED] KONSTANTA UNTUK SIMULASI MASA DEPAN ---
+DOSE_INLET_SENSITIVITY = 0.15  # Estimasi: Turun 1 kg Dosis = Inlet masa depan turun 0.15 poin
+MIN_PUMP_FLOW = 5.0            # Batas teknis pompa terendah
+
 @app.on_event("startup")
 def load_artifacts():
     global optimizer_model, predictor_model, predictor_features, optimizer_features, system_params
     try:
         optimizer_model = joblib.load('d0_xgboost_model_v3.pkl')
-        predictor_model = joblib.load('d0_predictor_model_v6.pkl')
+        predictor_model = joblib.load('d0_predictor_model_v3.pkl')
         
-        predictor_features = joblib.load('d0_predictor_features_v6.pkl')
+        predictor_features = joblib.load('d0_predictor_features_v3.pkl')
         system_params = joblib.load('d0_system_params_v3.pkl')
         
         optimizer_features = system_params.get('feature_names', [])
@@ -79,6 +83,7 @@ def calculate_process_params(production_rate: float, consistency: float):
     
     return flow_inlet, retention_time
 
+# --- [MODIFIED] Menambahkan parameter override_inlet untuk simulasi masa depan ---
 def predict_outlet_brightness(
     predictor_model,
     predictor_features,
@@ -88,11 +93,15 @@ def predict_outlet_brightness(
     ph: float,
     inlet_brightness: float,
     retention_time: float,
-    clo2_dose: float
+    clo2_dose: float,
+    override_inlet: float = None # Parameter tambahan
 ) -> float:
     """
     STAGE 1: Predict outlet brightness (VIRTUAL SENSOR)
     """
+    # Gunakan override_inlet jika ada (Future Simulation), jika tidak pakai data sensor asli
+    eff_inlet = override_inlet if override_inlet is not None else inlet_brightness
+
     k_factor = clo2_dose / (kappa + 0.1)
     
     clo2_per_ton = clo2_dose / (flow + 1.0)
@@ -102,7 +111,7 @@ def predict_outlet_brightness(
         'Temperature': temperature,
         'Flow': flow,
         'pH': ph,
-        'Brightness_Inlet': inlet_brightness,
+        'Brightness_Inlet': eff_inlet, # Updated variable
         'Retention_Time': retention_time,
         'ClO2_Dosage': clo2_dose,
         'K_Factor_Raw': k_factor,
@@ -125,11 +134,6 @@ def optimize_dose_binary_search(
 ) -> dict:
     """
     STAGE 2: Find MINIMUM ClO2 dose that achieves target brightness
-    
-    Strategy:
-    1. Use predictor to estimate current outlet
-    2. Binary search for dose that makes predictor output = 70%
-    3. Use optimizer to guide initial search range
     """
     
     # Unpack process data
@@ -165,7 +169,7 @@ def optimize_dose_binary_search(
     dose_hint = k_optimal_hint * kappa
     
     # Binary search bounds 
-    dose_min = max(20.0, dose_hint * 0.5)
+    dose_min = max(MIN_PUMP_FLOW, dose_hint * 0.5) # Updated min bound
     dose_max = min(60.0, dose_hint * 1.5)
     
     # Binary search
@@ -233,7 +237,7 @@ def predict_dose(data: ProcessInput):
         k_current = data.current_dose / (data.kappa + 0.1)
         K_TARGET = system_params['k_target']
         
-        # VIRTUAL SENSOR
+        # VIRTUAL SENSOR (CURRENT REALITY)
         estimated_outlet = predict_outlet_brightness(
             predictor_model, predictor_features,
             data.kappa, data.temperature, flow_inlet, data.ph,
@@ -256,46 +260,82 @@ def predict_dose(data: ProcessInput):
                 reason=f"Steady State: Brightness {estimated_outlet:.2f}% sudah masuk rentang target (69-71%)"
             )
         
-        #OPTIMIZATION - Find dose to reach 70%
-        process_data = {
-            'kappa': data.kappa,
-            'temperature': data.temperature,
-            'flow': flow_inlet,
-            'ph': data.ph,
-            'inlet_brightness': data.inlet_brightness,
-            'retention_time': retention_time
-        }
-        
-        optimization_result = optimize_dose_binary_search(
-            predictor_model, predictor_features,
-            optimizer_model, optimizer_features,
-            K_TARGET, process_data, TARGET_BRIGHTNESS
-        )
-        
-        optimal_dose = optimization_result['optimal_dose']
-        predicted_outlet = optimization_result['predicted_outlet']
-        k_optimal = optimization_result['k_optimal']
-        
-        print(f"[OPTIMIZER] Optimal dose: {optimal_dose:.2f} → Predicted outlet: {predicted_outlet:.2f}%")
+        # --- [ADDED LOGIC] HIGH INLET / OVER-BLEACH HANDLING ---
+        future_inlet = data.inlet_brightness # Default: tidak berubah
+        optimal_dose = 0.0
+        predicted_outlet = 0.0
+        status = ""
+        reason = ""
+
+        # Jika Inlet Brightness Tinggi (Over-bleach potential)
+        if data.inlet_brightness >= (TARGET_BRIGHTNESS - 0.5):
+            # 1. Hitung Kelebihan Brightness di Outlet
+            excess = estimated_outlet - TARGET_BRIGHTNESS
+            if excess < 0: excess = 0
+
+            # 2. Hitung Dosis yang harus dipotong (Reverse Engineering)
+            # Rumus: Excess / Sensitivity
+            dose_cut_needed = excess / DOSE_INLET_SENSITIVITY
+            target_dose = data.current_dose - dose_cut_needed
+            
+            # 3. Tentukan Optimal Dose (min 5.0 kg)
+            optimal_dose = max(MIN_PUMP_FLOW, target_dose)
+            
+            # 4. Simulasi Masa Depan (Future Inlet Simulation)
+            actual_cut = data.current_dose - optimal_dose
+            estimated_drop = actual_cut * DOSE_INLET_SENSITIVITY
+            future_inlet = data.inlet_brightness - estimated_drop
+            
+            status = "DEEP_CUT_MODE"
+            
+            # [REQUESTED MESSAGE] Tampilan spesifik yang Anda minta
+            reason = f"Over-bleach detected. Cutting {actual_cut:.1f} kg to drop future Inlet by ~{estimated_drop:.1f} pts."
+            
+            # 5. Prediksi Outlet menggunakan FUTURE INLET (Agar hasil mendekati 70%)
+            predicted_outlet = predict_outlet_brightness(
+                predictor_model, predictor_features,
+                data.kappa, data.temperature, flow_inlet, data.ph,
+                data.inlet_brightness, retention_time, optimal_dose,
+                override_inlet=future_inlet # Kunci logika 70%
+            )
+            
+            k_optimal = optimal_dose / (data.kappa + 0.1)
+
+        else:
+            # --- NORMAL LOGIC (BINARY SEARCH) ---
+            process_data = {
+                'kappa': data.kappa,
+                'temperature': data.temperature,
+                'flow': flow_inlet,
+                'ph': data.ph,
+                'inlet_brightness': data.inlet_brightness,
+                'retention_time': retention_time
+            }
+            
+            optimization_result = optimize_dose_binary_search(
+                predictor_model, predictor_features,
+                optimizer_model, optimizer_features,
+                K_TARGET, process_data, TARGET_BRIGHTNESS
+            )
+            
+            optimal_dose = optimization_result['optimal_dose']
+            predicted_outlet = optimization_result['predicted_outlet']
+            k_optimal = optimization_result['k_optimal']
+            
+            status = "OPTIMIZED"
+            reason = f"Target adjustment from {estimated_outlet:.1f}% to {TARGET_BRIGHTNESS:.1f}%"
         
         # STEP 5: SAFETY GUARDRAILS
         dose_change = optimal_dose - data.current_dose
-        status = "OPTIMIZED"
-        reason = f"Target adjustment from {estimated_outlet:.1f}% to {TARGET_BRIGHTNESS:.1f}%"
-        
         final_dose = optimal_dose
         
-        # Guardrail 1: Directional safety
-        if estimated_outlet < STEADY_STATE_LOWER:
-            # Under-bleach: never decrease
-            if dose_change < 0:
+        # Guardrail 1: Directional safety 
+        if "DEEP_CUT" not in status:
+            if estimated_outlet < STEADY_STATE_LOWER and dose_change < 0:
                 final_dose = data.current_dose * 1.02
                 status = "SAFETY_UNDERBLEACH"
                 reason = "Under-target, prevented dose decrease"
-        
-        elif estimated_outlet > STEADY_STATE_UPPER:
-            # Over-bleach: never increase
-            if dose_change > 0:
+            elif estimated_outlet > STEADY_STATE_UPPER and dose_change > 0:
                 final_dose = data.current_dose * 0.98
                 status = "SAFETY_OVERBLEACH"
                 reason = "Over-target, prevented dose increase"
@@ -306,21 +346,29 @@ def predict_dose(data: ProcessInput):
         
         if abs(actual_change) > max_change:
             final_dose = data.current_dose + np.sign(actual_change) * max_change
-            if status == "OPTIMIZED":
+            if "SAFETY" not in status:
                 status = "RATE_LIMITED"
-                reason = f"Change limited to ±20% ({max_change:.2f} kg/adt)"
+                # Jika kena rate limit di mode Deep Cut, update pesan agar tetap jujur
+                if "DEEP_CUT" in status:
+                    limited_cut = data.current_dose - final_dose
+                    est_drop_limited = limited_cut * DOSE_INLET_SENSITIVITY
+                    future_inlet = data.inlet_brightness - est_drop_limited # Update simulasi future
+                    reason = f"Over-bleach detected. Cutting {limited_cut:.1f} kg (Rate Limited) to drop future Inlet by ~{est_drop_limited:.1f} pts."
+                else:
+                    reason = f"Change limited to ±20% ({max_change:.2f} kg/adt)"
         
         # Guardrail 3: Absolute bounds
-        final_dose = np.clip(final_dose, 20.0, 60.0)
+        final_dose = np.clip(final_dose, MIN_PUMP_FLOW, 60.0)
         
-        # Predict outlet with final recommended dose
+        # Final Prediction (Using Future Inlet if Deep Cut was active)
         final_predicted_outlet = predict_outlet_brightness(
             predictor_model, predictor_features,
             data.kappa, data.temperature, flow_inlet, data.ph,
-            data.inlet_brightness, retention_time, final_dose
+            data.inlet_brightness, retention_time, final_dose,
+            override_inlet=future_inlet
         )
         
-        final_k = final_dose / data.kappa
+        final_k = final_dose / (data.kappa + 0.1)
         
         # RETURN RESPONSE
         return OptimizationResponse(
