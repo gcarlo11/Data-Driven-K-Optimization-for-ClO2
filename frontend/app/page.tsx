@@ -238,28 +238,28 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* Kartu Metrik dengan Nilai yang Dibulatkan */}
+                  {/* Matriks Performa */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* Optimal K-Factor dengan pengecekan Steady State */}
                     <MetricCard 
-                      label="Optimal K" 
+                      label="Optimal K-Factor" 
+                      // Jika status HOLD_STEADY, tampilkan "-", jika tidak tampilkan angka
                       value={result.control_status === 'HOLD_STEADY' ? '-' : result.k_optimal.toFixed(4)} 
-                      sub="Target" 
+                      sub="Efficiency Target" 
                       highlight 
                     />
                     
                     <MetricCard 
-                      label="Actual K" 
+                      label="Current K-Factor" 
                       value={result.k_current.toFixed(4)} 
-                      sub="Current Ratio" 
+                      sub="Actual Ratio" 
                     />
-                    
+
                     <MetricCard 
                       label="Est. Outlet" 
                       value={result.predicted_outlet_optimized.toFixed(2)} 
                       sub="Target ISO" 
                     />
-                    
+
                     <MetricCard 
                       label="Efficiency" 
                       value={result.control_status === 'HOLD_STEADY' ? '100.0%' : `${((result.k_optimal / result.k_current) * 100).toFixed(1)}%`} 
